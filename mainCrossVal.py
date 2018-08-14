@@ -43,7 +43,7 @@ def acc(y_true, y_preds):
 iris = datasets.load_iris()
 X = iris.data[:, :2]  # we only take the first two features.
 y =iris.target
-np.place(y, y==2, 1)
+#np.place(y, y==2, 1)
 print(y.shape)
 x_train, x_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=10)
 
@@ -177,15 +177,16 @@ print('Evaluation SVM CV :', acc(y_val, preds))
 
 ### CatBoostClassifier
 catboost_params ={
-    'loss_function': 'Logloss',
+    'loss_function': 'MultiClass',
     'learning_rate': 0.1,
     'iterations': 5000,
     'depth': 8,
-    'class_weights': [1, 2],
+    #'class_weights': [1, 2],
     'bootstrap_type': 'Bernoulli',
     'random_seed': 3,
     'verbose': False,
-    'eval_metric':'AUC'
+    #'eval_metric':'AUC',
+    'classes_count': len(np.unique(y))
 }
 
 

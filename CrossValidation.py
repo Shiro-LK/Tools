@@ -81,7 +81,11 @@ class CrossValClassifier():
                             else:
                                 prediction += model.predict(data, ntree_limit=model.best_iteration+1)
                         else:
-
+                            if type(model) != self.lgbm_type:
+                                if type(model) != self.catboost_type:
+                                    data = np.nan_to_num(data.astype('float32'))
+                                else:
+                                    data = np.nan_to_num(data)
                             if i == 0:
                                 prediction = model.predict(data)
                             else:
@@ -101,15 +105,32 @@ class CrossValClassifier():
                     for i, model in enumerate(self.models):
                         if type(model) == self.xgb_type:
                             if i == 0:
-                                prediction = model.predict_proba(data, ntree_limit=model.best_iteration+1)
+                                if self.binary:
+                                    prediction = model.predict_proba(data, ntree_limit=model.best_iteration+1)[:,1]
+                                else:
+                                    prediction = model.predict_proba(data, ntree_limit=model.best_iteration+1)
                             else:
-                                prediction += model.predict_proba(data, ntree_limit=model.best_iteration+1)
+                                if self.binary:
+                                    prediction += model.predict_proba(data, ntree_limit=model.best_iteration+1)[:,1]
+                                else:
+                                    prediction += model.predict_proba(data, ntree_limit=model.best_iteration+1)
                         else:
-
+                            if type(model) != self.lgbm_type:
+                                if type(model) != self.catboost_type:
+                                    data = np.nan_to_num(data.astype('float32'))
+                                else:
+                                    data = np.nan_to_num(data)
+                                    
                             if i == 0:
-                                prediction = model.predict_proba(data)
+                                if self.binary:
+                                    prediction = model.predict_proba(data)[:,1]
+                                else:
+                                    prediction = model.predict_proba(data)
                             else:
-                                prediction += model.predict_proba(data)
+                                if self.binary:
+                                    prediction += model.predict_proba(data)[:,1]
+                                else:
+                                    prediction += model.predict_proba(data)
         return prediction/len(self.models)
     
     def save_models(self, name='save.pkl'):
@@ -122,7 +143,7 @@ class CrossValClassifier():
             pickle.dump(self, f)
     
     
-    def fit(self, X, y, X_test=None, y_test=None, eval_metric=None, number_iteration=1000, early_stopping_rounds=50, verbose=False):
+    def fit(self, X, y, X_test=None, y_test=None, eval_metric=None, number_iteration=1000, early_stopping_rounds=50, verbose=False, custom_eval_metric=None, verbose_eval=True, binary=False):
         '''
             predicts : None or 'proba'. Usefull for certain model where we need to use predict_proba to get probabilities
             classification : if true, fix binary variable. If logistic regression, binary equal True, else False.
@@ -131,14 +152,22 @@ class CrossValClassifier():
             eval metric : metric use to computed the performance of the validation/test. It can be a custom or sklearn metric.
                           Be cautious, depending of the output of your model you will need probably to create your own metric.
                           For the classification, the model output the probability for the performance calculus. 
+            custom_eval_metric: custom metric used during the validation process for XGBoost or LightGBM (with the early stopping parameters)
+            early stopping rounds : parameters used for XGB. Else use it when you initiliaze the model in the dic
+            binary : use for binary classification
         '''
         
         folds = KFold(n_splits=self.n_split)
-        
+        self.binary = binary
         # saves predictions 
-        if X_test is not None:
-            test_preds = np.zeros((X_test.shape[0], len(np.unique(y_test))))
-        val_preds = np.zeros((X.shape[0],len(np.unique(y_test))))
+        if binary:
+            if X_test is not None:
+                test_preds = np.zeros((X_test.shape[0], ))
+            val_preds = np.zeros((X.shape[0],)) # number of class 
+        else:
+            if X_test is not None:
+                test_preds = np.zeros((X_test.shape[0], len(np.unique(y))))
+            val_preds = np.zeros((X.shape[0],len(np.unique(y)))) # number of class
         
 
         if type(self.model_base) == self.lgbm_type:
@@ -147,17 +176,25 @@ class CrossValClassifier():
             for train_idx, val_idx in folds.split(X):
                 
                 model = copy.deepcopy(self.model_base)
-                model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])],
-                         early_stopping_rounds=early_stopping_rounds, verbose=verbose)
+                model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])], eval_metric=custom_eval_metric,
+                          verbose=verbose)
                 
-                preds = model.predict_proba(X[val_idx])
+                if binary:
+                    preds = model.predict_proba(X[val_idx])[:,1]
+                else:
+                    preds = model.predict_proba(X[val_idx])
+
                 val_preds[val_idx] = preds
-                if eval_metric is not None:
+                if eval_metric is not None and verbose_eval:
                     print('Evaluation kfold : ', eval_metric(y[val_idx], preds))
-                
-                test_preds += model.predict_proba(X_test)/self.n_split
+                    
+                if X_test is not None:
+                    if binary:
+                        test_preds += model.predict_proba(X_test)[:,1]
+                    else:
+                        test_preds += model.predict_proba(X_test)
                 self.models.append(model)
-                
+                print(test_preds.shape)
             #print('Average Evaluation k-fold :', eval_metric(val_preds, y_data))
         elif type(self.model_base) == self.xgb_type:
             print('### XGB model ###')
@@ -165,53 +202,82 @@ class CrossValClassifier():
             for train_idx, val_idx in folds.split(X):
                                 
                 model = copy.deepcopy(self.model_base) 
-                model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])],
-                            early_stopping_rounds=early_stopping_rounds, verbose=verbose)
+                model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])], early_stopping_rounds=early_stopping_rounds,
+                            eval_metric=custom_eval_metric, verbose=verbose)
                 
-                preds = model.predict_proba(X[val_idx], ntree_limit=model.best_iteration+1)
+                if binary:
+                    preds = model.predict_proba(X[val_idx], ntree_limit=model.best_iteration+1)[:,1]
+                else:
+                    preds = model.predict_proba(X[val_idx], ntree_limit=model.best_iteration+1)
+               
                 val_preds[val_idx] = preds
-                if eval_metric is not None:
+                if eval_metric is not None and verbose_eval:
                     print('Evaluation kfold : ', eval_metric(y[val_idx], preds))
                 
                 if X_test is not None:
-                    test_preds += model.predict_proba(X_test, ntree_limit=model.best_iteration)
+                    if binary:
+                        test_preds += model.predict_proba(X_test, ntree_limit=model.best_iteration+1)[:,1]
+                    else:
+                        test_preds += model.predict_proba(X_test, ntree_limit=model.best_iteration+1)
+                    
                 self.models.append(model)
     
             #print('Average Evaluation k-fold :', eval_metric(val_preds, y_data))
             
         elif type(self.model_base) == self.catboost_type:
             print('### CatBoost model ###')
-           
+            X = np.nan_to_num(X)
+            if X_test is not None:
+                X_test = np.nan_to_num(X_test)
             for train_idx, val_idx in folds.split(X):
                                 
                 model = copy.deepcopy(self.model_base) 
                 model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])],
-                            early_stopping_rounds=early_stopping_rounds, verbose=verbose, use_best_model=True)
+                            verbose=verbose, use_best_model=True)
                 
-                preds = model.predict_proba(X[val_idx])
+                if binary:
+                    preds = model.predict_proba(X[val_idx])[:,1]
+                else:
+                    preds = model.predict_proba(X[val_idx])
+
                 val_preds[val_idx] = preds
-                if eval_metric is not None:
+                if eval_metric is not None and verbose_eval:
                     print('Evaluation kfold : ', eval_metric(y[val_idx], preds))
                 
                 if X_test is not None:
-                    test_preds += model.predict_proba(X_test)
+                    if binary:
+                        test_preds += model.predict_proba(X_test)[:,1]
+                    else:
+                        test_preds += model.predict_proba(X_test)
                 self.models.append(model)    
         else:
             print('### Sklearn model ###')
+            X = np.nan_to_num(X.astype('float32'))
+            if X_test is not None:
+                X_test = np.nan_to_num(X_test.astype('float32'))
             for train_idx, val_idx in folds.split(X):
                 model = copy.deepcopy(self.model_base)
                 model.fit(X[train_idx], y[train_idx])
                 
  
-                preds = model.predict_proba(X[val_idx])
-                print('Evaluation kfold : ', eval_metric(y[val_idx], preds))
+                if binary:
+                    preds = model.predict_proba(X[val_idx])[:,1]
+                else:
+                    preds = model.predict_proba(X[val_idx])
+                    
+                if eval_metric is not None and verbose_eval:
+                    print('Evaluation kfold : ', eval_metric(y[val_idx], preds))
                 val_preds[val_idx] = preds
+                
                 if X_test is not None:
-                    test_preds += model.predict_proba(X_test)
+                    if binary:
+                        test_preds += model.predict_proba(X_test)[:,1]
+                    else:
+                        test_preds += model.predict_proba(X_test)
                 self.models.append(model)
                 
-            if eval_metric is not None:         
-                print('Average Evaluation k-fold :', eval_metric(y, val_preds))
+        if eval_metric is not None and verbose_eval:         
+            print('Average Evaluation k-fold :', eval_metric(y, val_preds))
         ### training finished
         if y_test is not None:
             print('Evaluation Test : ', eval_metric(y_test, test_preds/self.n_split))
@@ -255,6 +321,11 @@ class CrossValRegressor():
                             else:
                                 prediction += model.predict(data, ntree_limit=model.best_iteration+1)
                         else:
+                            if type(model) != self.lgbm_type:
+                                if type(model) == self.catboost_type:
+                                     data = np.nan_to_num(data)
+                                else:
+                                    data = np.nan_to_num(data.astype('float32'))
 
                             if i == 0:
                                 prediction = model.predict(data)
@@ -272,7 +343,7 @@ class CrossValRegressor():
             pickle.dump(self, f)
     
     
-    def fit(self, X, y, X_test=None, y_test=None, eval_metric=None, number_iteration=1000, early_stopping_rounds=50, verbose=False):
+    def fit(self, X, y, X_test=None, y_test=None, eval_metric=None, number_iteration=1000, early_stopping_rounds=50, verbose=False, verbose_eval=True, custom_eval_metric=None):
         '''
             params : use only for xgb and lgb model
             X_data, y_data : data which will be decomposed in train and val for the cross validation
@@ -296,10 +367,10 @@ class CrossValRegressor():
                 
                 model = copy.deepcopy(self.model_base)
                 model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])],
-                          early_stopping_rounds=early_stopping_rounds, verbose=verbose)
+                          eval_metric=custom_eval_metric, verbose=verbose)
                 preds = model.predict(X[val_idx])
                 val_preds[val_idx] = preds
-                if eval_metric is not None:
+                if eval_metric is not None and verbose_eval:
                     print('Evaluation kfold LGBM: ', eval_metric(y[val_idx], preds))
                 
                 
@@ -316,11 +387,11 @@ class CrossValRegressor():
                 
                 model = copy.deepcopy(self.model_base)
                 model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])],
-                          early_stopping_rounds=early_stopping_rounds, verbose=verbose)
+                          early_stopping_rounds=early_stopping_rounds, eval_metric=custom_eval_metric, verbose=verbose)
                 
                 preds = model.predict(X[val_idx], ntree_limit=model.best_iteration+1)
                 val_preds[val_idx] = preds
-                if eval_metric is not None:
+                if eval_metric is not None and verbose_eval:
                     print('Evaluation kfold XGB: ', eval_metric(y[val_idx], preds))
                 
                 
@@ -331,15 +402,18 @@ class CrossValRegressor():
         elif type(self.model_base) == self.catboost_type:
             print('### CatBoost model ###')
            
+            X = np.nan_to_num(X)
+            if X_test is not None:
+                X_test = np.nan_to_num(X_test)
             for train_idx, val_idx in folds.split(X):
                                 
                 model = copy.deepcopy(self.model_base) 
                 model.fit(X[train_idx], y[train_idx], eval_set=[(X[val_idx], y[val_idx])],
-                            early_stopping_rounds=early_stopping_rounds, verbose=verbose, use_best_model=True)
+                            verbose=verbose, use_best_model=True)
                 
                 preds = model.predict(X[val_idx])
                 val_preds[val_idx] = preds
-                if eval_metric is not None:
+                if eval_metric is not None and verbose_eval:
                     print('Evaluation kfold : ', eval_metric(y[val_idx], preds))
                 
                 if X_test is not None:
@@ -347,13 +421,16 @@ class CrossValRegressor():
                 self.models.append(model)         
             
         else:
-            
+            print('### Sklearn Model ###')
+            X = np.nan_to_num(X.astype('float32'))
+            if X_test is not None:
+                X_test = np.nan_to_num(X_test.astype('float32'))
             for train_idx, val_idx in folds.split(X):
                 model = copy.deepcopy(self.model_base)
                 model.fit(X[train_idx], y[train_idx])
 
                 preds = model.predict(X[val_idx])
-                if eval_metric is not None:
+                if eval_metric is not None and verbose_eval:
                     print('Evaluation kfold : ', eval_metric(y[val_idx], preds))
                 val_preds[val_idx] = preds
                 
@@ -361,8 +438,8 @@ class CrossValRegressor():
                     test_preds += model.predict(X_test)
                 self.models.append(model)
                    
-        if eval_metric is not None:
-            print('Average Evaluation k-fold :', eval_metric(y, val_preds))
+        if eval_metric is not None and verbose_eval:
+            print('Average Evaluation k-fold Validation:', eval_metric(y, val_preds))
         if y_test is not None and X_test is not None and eval_metric is not None:
             print('Evaluation Test : ', eval_metric(y_test, test_preds/self.n_split))
                 
