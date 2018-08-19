@@ -116,35 +116,36 @@ class StackingClassifierCV():
             preds_meta_val_of = np.zeros((len(self.meta_models), X.shape[0], temp.shape[-1]))
             if X_test is not None:
                 preds_meta_test_of = np.zeros((len(self.meta_models), X_test.shape[0], pred_test.shape[-1]))
-            
-        begin = time.time()
-        for idx in range(len(self.meta_models)):
-            cvmetaof = CrossValClassifier(copy.deepcopy(self.meta_models[idx]), n_split=self.n_split)
-            preds_val, preds_test = cvmetaof.fit(new_features_train, y, X_test=new_features_test, y_test=y_test,
-                       eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, verbose=verbose,
-                       verbose_eval=verbose_eval_cv, binary=binary, custom_eval_metric=self.custom_metric_meta[idx])
-            if binary:
-                preds_meta_val_of[idx,:] = preds_val
-            else:
-                preds_meta_val_of[idx,:,:] = preds_val
+        
+        if only_features is not None:
+            begin = time.time()
+            for idx in range(len(self.meta_models)):
+                cvmetaof = CrossValClassifier(copy.deepcopy(self.meta_models[idx]), n_split=self.n_split)
+                preds_val, preds_test = cvmetaof.fit(new_features_train, y, X_test=new_features_test, y_test=y_test,
+                           eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, verbose=verbose,
+                           verbose_eval=verbose_eval_cv, binary=binary, custom_eval_metric=self.custom_metric_meta[idx])
+                if binary:
+                    preds_meta_val_of[idx,:] = preds_val
+                else:
+                    preds_meta_val_of[idx,:,:] = preds_val
+                    
+                if X_test is not None:
+                    preds_meta_test_of[idx,:] = preds_test
+                else:
+                    preds_meta_test_of[idx,:,:] = preds_test
+                self.CVmeta_models_of.append(cvmetaof)
                 
-            if X_test is not None:
-                preds_meta_test_of[idx,:] = preds_test
-            else:
-                preds_meta_test_of[idx,:,:] = preds_test
-            self.CVmeta_models_of.append(cvmetaof)
-            
-            
-        print('End training Meta only feature:', time.time()-begin)
-        if eval_metric is not None:
-            print("Validation K-fold averaging Meta Only new features: ", eval_metric(y, np.mean(preds_meta_val_of, axis=0)))
-        if X_test is not None and y_test is not None:
-            #preds_meta_test  = preds_test.reshape((preds_test.shape[0], len(self.CVmeta_models), -1))
-            #preds_meta_test = preds_meta_test.transpose(1,0,2) # (model, rowdata, probability)
-            print("Evaluation Meta learner averaging only new feature:", eval_metric(y_test, np.mean(preds_meta_test_of, axis=0) ))
+                
+            print('End training Meta only feature:', time.time()-begin)
+            if eval_metric is not None:
+                print("Validation K-fold averaging Meta Only new features: ", eval_metric(y, np.mean(preds_meta_val_of, axis=0)))
+            if X_test is not None and y_test is not None:
+                #preds_meta_test  = preds_test.reshape((preds_test.shape[0], len(self.CVmeta_models), -1))
+                #preds_meta_test = preds_meta_test.transpose(1,0,2) # (model, rowdata, probability)
+                print("Evaluation Meta learner averaging only new feature:", eval_metric(y_test, np.mean(preds_meta_test_of, axis=0) ))
         
         ## train meature  on  data + new features
-        if only_features == False:
+        if only_features != True:
             print('### Meta Learner on data + new features ###')
             new_features_train = np.column_stack((X, new_features_train))
             if new_features_test is not None:
@@ -295,7 +296,7 @@ class StackingRegressorCV():
         except:
             print('CatBoost not installed')
     
-    def fit(self, X, y, X_test=None, y_test=None, eval_metric=None, early_stopping_rounds=50, num_iterations=10000, verbose=False, only_features=False, save='features.csv', names=None, verbose_eval_cv = False):
+    def fit(self, X, y, X_test=None, y_test=None, eval_metric=None, early_stopping_rounds=50, num_iterations=10000, verbose=False, only_features=None, save='features.csv', names=None, verbose_eval_cv = False):
         """"
             Fit method using cross validation. 
             only features : train the model only on new features else create two meta learner : one which learn 
@@ -350,35 +351,36 @@ class StackingRegressorCV():
         ftest.to_csv('test_'+save, index=False)
         
         ## train meta  only on new features
-        print('### Meta Learner on new features ###')
-        preds_meta_val_of = np.zeros((len(self.meta_models), X.shape[0]))
-        if X_test is not None:
-            preds_meta_test_of = np.zeros((len(self.meta_models), X_test.shape[0]))
-            
-        begin = time.time()
-        for idx in range(len(self.meta_models)):
-            cvmetaof = CrossValRegressor(copy.deepcopy(self.meta_models[idx]), n_split=self.n_split)
-            preds_val, preds_test = cvmetaof.fit(new_features_train, y, X_test=new_features_test, y_test=y_test,
-                       eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, verbose=verbose,
-                       verbose_eval=verbose_eval_cv , custom_eval_metric=self.custom_metric_meta[idx])
-            preds_meta_val_of[idx,:] = preds_val
-            
+        if only_features is not None: # not train in only features
+            print('### Meta Learner on new features ###')
+            preds_meta_val_of = np.zeros((len(self.meta_models), X.shape[0]))
             if X_test is not None:
-                preds_meta_test_of[idx,:] = preds_test
-            
-            self.CVmeta_models_of.append(cvmetaof)
-            
-            
-        print('End training Meta only feature:', time.time()-begin)
-        if eval_metric is not None:
-            print("Validation K-fold averaging Meta Only new features: ", eval_metric(y, np.mean(preds_meta_val_of, axis=0)))
-        if X_test is not None and y_test is not None:
-            #preds_meta_test  = preds_test.reshape((preds_test.shape[0], len(self.CVmeta_models), -1))
-            #preds_meta_test = preds_meta_test.transpose(1,0,2) # (model, rowdata, probability)
-            print("Evaluation Meta learner averaging only new feature:", eval_metric(y_test, np.mean(preds_meta_test_of, axis=0) ))
+                preds_meta_test_of = np.zeros((len(self.meta_models), X_test.shape[0]))
+                
+            begin = time.time()
+            for idx in range(len(self.meta_models)):
+                cvmetaof = CrossValRegressor(copy.deepcopy(self.meta_models[idx]), n_split=self.n_split)
+                preds_val, preds_test = cvmetaof.fit(new_features_train, y, X_test=new_features_test, y_test=y_test,
+                           eval_metric=eval_metric, early_stopping_rounds=early_stopping_rounds, verbose=verbose,
+                           verbose_eval=verbose_eval_cv , custom_eval_metric=self.custom_metric_meta[idx])
+                preds_meta_val_of[idx,:] = preds_val
+                
+                if X_test is not None:
+                    preds_meta_test_of[idx,:] = preds_test
+                
+                self.CVmeta_models_of.append(cvmetaof)
+                
+                
+            print('End training Meta only feature:', time.time()-begin)
+            if eval_metric is not None:
+                print("Validation K-fold averaging Meta Only new features: ", eval_metric(y, np.mean(preds_meta_val_of, axis=0)))
+            if X_test is not None and y_test is not None:
+                #preds_meta_test  = preds_test.reshape((preds_test.shape[0], len(self.CVmeta_models), -1))
+                #preds_meta_test = preds_meta_test.transpose(1,0,2) # (model, rowdata, probability)
+                print("Evaluation Meta learner averaging only new feature:", eval_metric(y_test, np.mean(preds_meta_test_of, axis=0) ))
         
         ## train meature  on  data + new features
-        if only_features == False:
+        if only_features != True:
             print('### Meta Learner on data + new features ###')
             new_features_train = np.column_stack((X, new_features_train))
             if new_features_test is not None:
